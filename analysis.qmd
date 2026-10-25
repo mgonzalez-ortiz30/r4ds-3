@@ -1,0 +1,81 @@
+---
+title: "Analyzing School District Reading Scores"
+author: "Melissa Gonzalez-Ortiz"
+format: html
+execute:
+  echo: false
+---
+
+```{r}
+#| message: false
+library(tidyverse)
+library(DBI)
+library(duckdb)
+library(dbplyr)
+```
+
+```{r}
+con <- dbConnect(duckdb(), "data/seda_2025.duckdb", read_only = TRUE)
+dbplyr_dist <- tbl(con, "district_scores")
+```
+
+```{r}
+#| cache: true
+#| cache.extra: !expr file.mtime("data/seda_2025.duckdb")
+score_change <- dbplyr_dist |>
+  filter(year %in% c(2015, 2023), !is.na(rla_score)) |>
+  select(district_id, district_name, state, year, rla_score) |>
+  collect() |>
+  pivot_wider(names_from = year, values_from = rla_score, names_prefix = "year_") |>
+  filter(!is.na(year_2015), !is.na(year_2023)) |>
+  mutate(rla_change = year_2023 - year_2015) |>
+  select(district_id, district_name, state, rla_change)
+
+state_change <- tbl(con, "state_scores") |>
+  filter(year %in% c(2015, 2023), !is.na(rla_score)) |>
+  select(stateabb, state_name, year, rla_score) |>
+  collect() |>
+  pivot_wider(names_from = year, values_from = rla_score, names_prefix = "year_") |>
+  filter(!is.na(year_2015), !is.na(year_2023)) |>
+  mutate(score_change = year_2023 - year_2015) |>
+  mutate(state_name = fct_reorder(state_name, year_2023))
+```
+
+```{r}
+ggplot(score_change, aes(x = rla_change, fill = rla_change > 0)) +
+  geom_histogram(boundary = 0) +
+  scale_fill_manual(
+    values = c(`FALSE` = "steelblue", `TRUE` = "orange"),
+    labels = c(`FALSE` = "Negative or zero", `TRUE` = "Positive"),
+    name = "Change"
+  ) +
+  labs(
+    title = "Distribution of District Reading Score Changes",
+    subtitle = paste("Districts with data in both years:", nrow(score_change)),
+    x = "Change in RLA score (2023 minus 2015)",
+    y = "Number of districts",
+    caption = "Positive values indicate improvement; negative values indicate decline."
+  )
+```
+
+```{r}
+ggplot(state_change, aes(y = state_name)) +
+  geom_segment(
+    aes(x = year_2015, xend = year_2023, yend = state_name, color = score_change > 0),
+    arrow = grid::arrow(length = grid::unit(0.08, "inches")),
+    linewidth = 0.6
+  ) +
+  geom_point(aes(x = year_2015), color = "gray50", size = 1.8) +
+  scale_color_manual(
+    values = c(`FALSE` = "steelblue", `TRUE` = "orange"),
+    labels = c(`FALSE` = "Declined or unchanged", `TRUE` = "Improved"),
+    name = "Change"
+  ) +
+  labs(
+    title = "State Reading Score Changes, 2015–2023",
+    subtitle = "Arrows run from 2015 to 2023; states are ordered by their 2023 score",
+    x = "RLA score",
+    y = NULL,
+    caption = "Gray dots mark 2015 scores. Arrow color indicates direction of change."
+  )
+```
